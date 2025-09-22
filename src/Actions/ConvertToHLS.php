@@ -6,14 +6,15 @@ namespace AchyutN\LaravelHLS\Actions;
 
 use AchyutN\LaravelHLS\Jobs\UpdateConversionProgress;
 use Exception;
+use FFMpeg\Exception\RuntimeException;
 use FFMpeg\Format\Video\X264;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use InvalidArgumentException;
+use ProtoneMedia\LaravelFFMpeg\Filesystem\Media;
 use ProtoneMedia\LaravelFFMpeg\Support\FFMpeg;
-use FFMpeg\Exception\RuntimeException;
 
-use function Laravel\Prompts\info;
 use function Laravel\Prompts\progress;
 
 final class ConvertToHLS
@@ -61,10 +62,14 @@ final class ConvertToHLS
                 ->setKiloBitrate($bitrate)
                 ->setAudioKiloBitrate(128)
                 ->setAdditionalParameters([
-                    '-vf', 'scale='.self::renameResolution($res),
-                    '-tune', 'zerolatency',
-                    '-preset', 'veryfast',
-                    '-crf', '22',
+                    '-vf',
+                    'scale='.self::renameResolution($res),
+                    '-tune',
+                    'zerolatency',
+                    '-preset',
+                    'veryfast',
+                    '-crf',
+                    '22',
                 ]);
         }
 
@@ -73,14 +78,66 @@ final class ConvertToHLS
                 ->setKiloBitrate($fileBitrate)
                 ->setAudioKiloBitrate(128)
                 ->setAdditionalParameters([
-                    '-vf', 'scale='.self::renameResolution($fileResolution),
-                    '-tune', 'zerolatency',
-                    '-preset', 'veryfast',
-                    '-crf', '22',
+                    '-vf',
+                    'scale='.self::renameResolution($fileResolution),
+                    '-tune',
+                    'zerolatency',
+                    '-preset',
+                    'veryfast',
+                    '-crf',
+                    '22',
                 ]);
         }
 
         try {
+            // Calcular pesos proporcionales para cada fase
+            $totalResolutions = count($lowerResolutions ?: [1]); // Mínimo 1 resolución
+
+            // Calcular estimación dinámica de archivos basada en duración del video
+            $videoDurationSeconds = (float) $media->getFormat()->get('duration');
+            $segmentDuration = 10; // Segundos por segmento HLS (configurable)
+
+            // Estimar número de segmentos .ts por resolución
+            $estimatedSegmentsPerResolution = ceil($videoDurationSeconds / $segmentDuration);
+
+            // Archivos por resolución:
+            // - N segmentos .ts (basado en duración)
+            // - 1 playlist .m3u8 por resolución
+            // - Archivos temporales durante procesamiento (estimado 20% adicional)
+            $filesPerResolution = $estimatedSegmentsPerResolution + 1; // .ts + .m3u8
+            $tempFilesOverhead = max(1, ceil($filesPerResolution * 0.2)); // 20% overhead para archivos temp
+
+            $totalEstimatedFiles = $totalResolutions * ($filesPerResolution + $tempFilesOverhead);
+
+            // Peso FFmpeg: Procesamiento de video (más costoso computacionalmente)
+            $ffmpegWeight = $totalResolutions * 10; // 10 unidades por resolución
+
+            // Peso Upload: Transferencia de archivos (menos costoso pero depende de red)
+            $uploadWeight = $totalEstimatedFiles * 2; // 2 unidades por archivo
+
+            $totalWeight = $ffmpegWeight + $uploadWeight;
+            $ffmpegPercentage = ($ffmpegWeight / $totalWeight) * 100;
+            $uploadPercentage = ($uploadWeight / $totalWeight) * 100;
+
+            Log::info("Progress weights calculated - FFmpeg: {$ffmpegPercentage}%, Upload: {$uploadPercentage}%");
+
+            // Configurar callback para tracking de upload
+            Media::setGlobalProgressCallback(function ($uploadedFiles, $totalFiles, $uploadProgress) use ($model, $ffmpegPercentage): void {
+                // Escalar upload progress desde el punto donde terminó FFmpeg
+                $uploadScaledProgress = $ffmpegPercentage + ($uploadProgress * (100 - $ffmpegPercentage) / 100);
+
+                Log::info('Upload Progress Debug (Cumulative Tracking)', [
+                    'uploaded_files' => $uploadedFiles,
+                    'total_files' => $totalFiles,
+                    'upload_progress' => $uploadProgress,
+                    'ffmpeg_percentage' => $ffmpegPercentage,
+                    'upload_scaled_progress' => $uploadScaledProgress,
+                    'final_progress' => (int) $uploadScaledProgress,
+                ]);
+
+                UpdateConversionProgress::dispatch($model, (int) $uploadScaledProgress);
+            });
+
             $export = FFMpeg::fromDisk($videoDisk)
                 ->open($inputPath)
                 ->exportForHLS()
@@ -90,7 +147,7 @@ final class ConvertToHLS
                 $export->addFormat($format);
             }
 
-            info('Started conversion for resolutions: '.implode(', ', array_keys($lowerResolutions)));
+            Log::info('Started conversion for resolutions: '.implode(', ', array_keys($lowerResolutions)));
 
             $progress = progress(
                 label: 'Converting video to HLS format...',
@@ -99,14 +156,23 @@ final class ConvertToHLS
             );
             $progress->start();
 
-            $export->onProgress(function ($percentage) use ($model, $progress, $startTime): void {
+            $export->onProgress(function ($percentage) use ($model, $progress, $startTime, $ffmpegPercentage): void {
                 $estimatedTime = self::estimateTime(
                     startTime: $startTime,
                     progress: $percentage
                 );
                 $progress->hint($estimatedTime);
                 $progress->advance();
-                UpdateConversionProgress::dispatch($model, $percentage);
+                // Escalar FFmpeg al porcentaje calculado proporcionalmente
+                $scaledFFmpegProgress = (int) ($percentage * $ffmpegPercentage / 100);
+
+                Log::info('FFmpeg Progress Debug', [
+                    'ffmpeg_percentage_raw' => $percentage,
+                    'ffmpeg_max_percentage' => $ffmpegPercentage,
+                    'scaled_ffmpeg_progress' => $scaledFFmpegProgress,
+                ]);
+
+                UpdateConversionProgress::dispatch($model, $scaledFFmpegProgress);
             });
 
             if (config('hls.enable_encryption')) {
@@ -118,10 +184,20 @@ final class ConvertToHLS
 
             $export->save("{$outputFolder}/{$hlsOutputPath}/playlist.m3u8");
 
+            Log::info('FFmpeg completed, starting upload phase', [
+                'ffmpeg_max_percentage' => $ffmpegPercentage,
+                'upload_should_start_at' => $ffmpegPercentage,
+            ]);
+
             FFMpeg::cleanupTemporaryFiles();
+
+            // Limpiar el callback global
+            Media::clearGlobalProgressCallback();
 
             $progress->finish();
         } catch (Exception $e) {
+            // Limpiar el callback global en caso de error
+            Media::clearGlobalProgressCallback();
             FFMpeg::cleanupTemporaryFiles();
             throw new RuntimeException("Failed to prepare formats for HLS conversion: {$e->getMessage()}", $e->getCode(), $e);
         }
