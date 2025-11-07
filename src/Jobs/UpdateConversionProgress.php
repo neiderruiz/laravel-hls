@@ -28,7 +28,14 @@ final class UpdateConversionProgress
     {
         Model::withoutTimestamps(function (): void {
             $this->model->setProgress((int) $this->percentage);
-            $this->model->saveQuietly();
+
+            // If reached 100%, use normal save() to trigger events
+            // Otherwise, use saveQuietly() for performance
+            if ((int) $this->percentage === 100) {
+                $this->model->save();
+            } else {
+                $this->model->saveQuietly();
+            }
         });
     }
 }
