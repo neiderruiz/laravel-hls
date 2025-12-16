@@ -54,38 +54,45 @@ final class ConvertToHLS
 
         $formats = [];
 
-        $lowerResolutions = array_filter($resolutions, fn ($resolution): bool => self::extractResolution($resolution)['height'] <= self::extractResolution($fileResolution)['height']);
+        $lowerResolutions = array_filter($resolutions, fn($resolution): bool => self::extractResolution($resolution)['height'] <= self::extractResolution($fileResolution)['height']);
 
         foreach ($lowerResolutions as $resolution => $res) {
             $bitrate = $kiloBitRates[$resolution] ?? 1000;
-            $formats[] = (new X264)
+
+            // Cambiamos X264 por una configuración manual de NVENC
+            $formats[] = (new X264('aac', 'h264_nvenc')) // Forzamos el codec de video a nvenc
                 ->setKiloBitrate($bitrate)
                 ->setAudioKiloBitrate(128)
                 ->setAdditionalParameters([
                     '-vf',
-                    'scale='.self::renameResolution($res),
-                    '-tune',
-                    'zerolatency',
+                    'hwupload_cuda,scale_cuda=' . self::renameResolution($res), // Escalado en GPU
                     '-preset',
-                    'veryfast',
-                    '-crf',
-                    '22',
+                    'p4',        // El más rápido para NVIDIA
+                    '-tune',
+                    'hq',         // Ultra Low Latency para NVIDIA
+                    '-pixel_format',
+                    'yuv420p',
+                    '-c:a',
+                    'aac'
                 ]);
         }
 
         if ($formats === []) {
-            $formats[] = (new X264)
+            // Pasamos 'aac' y 'h264_nvenc' al constructor de X264
+            $formats[] = (new X264('aac', 'h264_nvenc'))
                 ->setKiloBitrate($fileBitrate)
                 ->setAudioKiloBitrate(128)
                 ->setAdditionalParameters([
+                    // Subimos el frame a la memoria CUDA y escalamos en hardware
                     '-vf',
-                    'scale='.self::renameResolution($fileResolution),
-                    '-tune',
-                    'zerolatency',
+                    'hwupload_cuda,scale_cuda=' . self::renameResolution($fileResolution),
+                    // Parámetros específicos de NVIDIA
                     '-preset',
-                    'veryfast',
-                    '-crf',
-                    '22',
+                    'p4',         // Máxima velocidad en NVENC
+                    '-tune',
+                    'hq',        // Ultra Low Latency (reemplaza a zerolatency)
+                    '-pix_fmt',
+                    'yuv420p',    // Garantiza compatibilidad de color en navegadores
                 ]);
         }
 
@@ -147,7 +154,7 @@ final class ConvertToHLS
                 $export->addFormat($format);
             }
 
-            Log::info('Started conversion for resolutions: '.implode(', ', array_keys($lowerResolutions)));
+            Log::info('Started conversion for resolutions: ' . implode(', ', array_keys($lowerResolutions)));
 
             $progress = progress(
                 label: 'Converting video to HLS format...',
@@ -212,7 +219,7 @@ final class ConvertToHLS
         $remainingSteps = 100 - $progress;
         $etaSeconds = ($progress > 0) ? ($elapsed / $progress) * $remainingSteps : 0;
 
-        return 'Estimated time remaining: '.gmdate('H:i:s', (int) $etaSeconds);
+        return 'Estimated time remaining: ' . gmdate('H:i:s', (int) $etaSeconds);
     }
 
     /**
