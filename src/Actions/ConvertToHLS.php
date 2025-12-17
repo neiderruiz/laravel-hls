@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\Storage;
 use InvalidArgumentException;
 use ProtoneMedia\LaravelFFMpeg\Filesystem\Media;
 use ProtoneMedia\LaravelFFMpeg\Support\FFMpeg;
+use ProtoneMedia\LaravelFFMpeg\FFMpeg\NVENCFormat;
 
 use function Laravel\Prompts\progress;
 
@@ -59,18 +60,20 @@ final class ConvertToHLS
         foreach ($lowerResolutions as $resolution => $res) {
             $bitrate = $kiloBitRates[$resolution] ?? 1000;
 
-            // Cambiamos X264 por una configuración manual de NVENC
-            $formats[] = (new X264('aac', 'h264_nvenc')) // Forzamos el codec de video a nvenc
+            // Usar nuestro formato NVENC personalizado
+            $formats[] = (new NVENCFormat('aac'))
                 ->setKiloBitrate($bitrate)
                 ->setAudioKiloBitrate(128)
                 ->setAdditionalParameters([
                     '-vf',
                     'hwupload_cuda,scale_cuda=' . self::renameResolution($res), // Escalado en GPU
                     '-preset',
-                    'p4',        // El más rápido para NVIDIA
+                    'p4',        // Balance velocidad/calidad para NVIDIA
                     '-tune',
-                    'hq',         // Ultra Low Latency para NVIDIA
-                    '-pixel_format',
+                    'hq',        // High Quality para NVIDIA
+                    '-crf',
+                    '23',        // Control de calidad
+                    '-pix_fmt',
                     'yuv420p',
                     '-c:a',
                     'aac'
@@ -78,8 +81,8 @@ final class ConvertToHLS
         }
 
         if ($formats === []) {
-            // Pasamos 'aac' y 'h264_nvenc' al constructor de X264
-            $formats[] = (new X264('aac', 'h264_nvenc'))
+            // Usar formato NVENC también como fallback
+            $formats[] = (new NVENCFormat('aac'))
                 ->setKiloBitrate($fileBitrate)
                 ->setAudioKiloBitrate(128)
                 ->setAdditionalParameters([
@@ -88,9 +91,11 @@ final class ConvertToHLS
                     'hwupload_cuda,scale_cuda=' . self::renameResolution($fileResolution),
                     // Parámetros específicos de NVIDIA
                     '-preset',
-                    'p4',         // Máxima velocidad en NVENC
+                    'p4',         // Balance velocidad/calidad en NVENC
                     '-tune',
-                    'hq',        // Ultra Low Latency (reemplaza a zerolatency)
+                    'hq',         // High Quality
+                    '-crf',
+                    '23',         // Control de calidad
                     '-pix_fmt',
                     'yuv420p',    // Garantiza compatibilidad de color en navegadores
                 ]);
