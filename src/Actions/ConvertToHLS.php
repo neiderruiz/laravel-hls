@@ -66,7 +66,7 @@ final class ConvertToHLS
                 ->setAudioKiloBitrate(128)
                 ->setAdditionalParameters([
                     '-vf',
-                    'hwupload_cuda,scale_cuda=' . self::renameResolution($res), // Escalado en GPU
+                    'scale=' . self::renameResolution($res), // Escalado en CPU para compatibilidad
                     '-preset',
                     'p4',        // Balance velocidad/calidad para NVIDIA
                     '-tune',
@@ -86,9 +86,9 @@ final class ConvertToHLS
                 ->setKiloBitrate($fileBitrate)
                 ->setAudioKiloBitrate(128)
                 ->setAdditionalParameters([
-                    // Subimos el frame a la memoria CUDA y escalamos en hardware
+                    // Escalado en CPU para compatibilidad
                     '-vf',
-                    'hwupload_cuda,scale_cuda=' . self::renameResolution($fileResolution),
+                    'scale=' . self::renameResolution($fileResolution),
                     // Parámetros específicos de NVIDIA
                     '-preset',
                     'p4',         // Balance velocidad/calidad en NVENC
