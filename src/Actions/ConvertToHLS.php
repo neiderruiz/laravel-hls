@@ -107,7 +107,7 @@ final class ConvertToHLS
 
             // Calcular estimación dinámica de archivos basada en duración del video
             $videoDurationSeconds = (float) $media->getFormat()->get('duration');
-            $segmentDuration = 10; // Segundos por segmento HLS (configurable)
+            $segmentDuration = $model->getHLSSegmentLength(); // Segundos por segmento HLS
 
             // Estimar número de segmentos .ts por resolución
             $estimatedSegmentsPerResolution = ceil($videoDurationSeconds / $segmentDuration);
@@ -153,6 +153,7 @@ final class ConvertToHLS
             $export = FFMpeg::fromDisk($videoDisk)
                 ->open($inputPath)
                 ->exportForHLS()
+                ->setSegmentLength($segmentDuration)
                 ->toDisk($hlsDisk);
 
             foreach ($formats as $format) {

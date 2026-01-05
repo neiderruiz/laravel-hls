@@ -178,4 +178,12 @@ return [
      */
     'delete_original_file_after_conversion' => false,
 
+    /**
+     * The segment length for HLS conversion (in seconds).
+     * This determines how long each HLS segment will be.
+     *
+     * Default: 10
+     */
+    'segment_length' => 10,
+
 ];

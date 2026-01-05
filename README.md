@@ -125,6 +125,7 @@ You can configure the package by editing the `config/hls.php` file. Below are th
 | `model_aliases`                         | An array of model aliases for easy access to HLS conversion.                                  | `array`  | `[]`                  |
 | `register_routes`                       | Whether to register the HLS playlist routes automatically.                                    | `bool`   | `true`                |
 | `delete_original_file_after_conversion` | A bool to turn on/off deleting the original video after conversion.                           | `bool`   | `false`               |
+| `segment_length`                        | The segment length for HLS conversion (in seconds). Determines how long each HLS segment will be. | `int`    | `10`                  |
 
 > 💡 Tip: All disk values must be valid disks defined in your `config/filesystems.php`.
 
@@ -146,6 +147,8 @@ override values will be used instead of the global config.
 | `$hlsOutputPath`         | Overrides `hls_output_path`. Path to store HLS files relative to `hlsDisk`.       | `string` |
 | `$hlsSecretsOutputPath`  | Overrides `secrets_output_path`. Path to store secrets relative to `secretsDisk`. | `string` |
 | `$tempStorageOutputPath` | Overrides `temp_storage_path`. Path to store conversion temp files to `tmp`.      | `string` |
+| `$hlsResolutions`        | Overrides `resolutions`. Array of resolutions for HLS conversion.                 | `array`  |
+| `$hlsSegmentLength`      | Overrides `segment_length`. Segment length in seconds for HLS conversion.         | `int`    |
 
 #### Example
 
@@ -168,8 +171,103 @@ class CustomVideo extends Model
     public string $hlsSecretsOutputPath = 'streamed/secrets';
     
     public string $tempStorageOutputPath = 'tmp';
+    
+    // Custom resolutions for this specific model
+    public array $hlsResolutions = [
+        '360p' => '640x360',
+        '720p' => '1280x720',
+        '1080p' => '1920x1080',
+    ];
+    
+    // Custom segment length for this specific model
+    public int $hlsSegmentLength = 6; // 6 seconds per segment
 }
 ```
+
+### HLS Configuration Examples
+
+#### Custom Resolutions
+
+You can customize the available resolutions for HLS conversion both globally and per model:
+
+**Global Configuration (`config/hls.php`):**
+```php
+'resolutions' => [
+    '480p' => '854x480',
+    '720p' => '1280x720',
+    '1080p' => '1920x1080',
+    '1440p' => '2560x1440',
+],
+```
+
+**Per Model Configuration:**
+```php
+class HighQualityVideo extends Model
+{
+    use ConvertsToHls;
+    
+    // Only high-quality resolutions for premium content
+    public array $hlsResolutions = [
+        '1080p' => '1920x1080',
+        '1440p' => '2560x1440',
+        '2160p' => '3840x2160',
+    ];
+}
+
+class MobileVideo extends Model
+{
+    use ConvertsToHls;
+    
+    // Mobile-optimized resolutions
+    public array $hlsResolutions = [
+        '360p' => '640x360',
+        '480p' => '854x480',
+        '720p' => '1280x720',
+    ];
+}
+```
+
+#### Custom Segment Length
+
+Configure the HLS segment duration to optimize for your specific use case:
+
+**Global Configuration (`config/hls.php`):**
+```php
+'segment_length' => 10, // 10 seconds per segment (default)
+```
+
+**Per Model Configuration:**
+```php
+class LiveStream extends Model
+{
+    use ConvertsToHls;
+    
+    // Shorter segments for live streaming (lower latency)
+    public int $hlsSegmentLength = 4;
+}
+
+class MovieContent extends Model
+{
+    use ConvertsToHls;
+    
+    // Longer segments for movies (better compression)
+    public int $hlsSegmentLength = 15;
+}
+
+class ShortVideo extends Model
+{
+    use ConvertsToHls;
+    
+    // Very short segments for quick seeking
+    public int $hlsSegmentLength = 2;
+}
+```
+
+**Segment Length Guidelines:**
+- **2-4 seconds**: Live streaming, low latency scenarios
+- **6-10 seconds**: General purpose, balanced latency/efficiency
+- **10-15 seconds**: Long-form content, better compression efficiency
+- **15+ seconds**: Large files where seeking precision is less important
 
 ## License
 

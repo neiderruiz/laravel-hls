@@ -99,6 +99,11 @@ trait ConvertsToHLS
         return property_exists($this, 'hlsResolutions') ? $this->hlsResolutions : config('hls.resolutions');
     }
 
+    public function getHLSSegmentLength(): int
+    {
+        return config('hls.segment_length', 10);
+    }
+
     public function getHLSRootFolderPath(): string
     {
         return uuid_create();
